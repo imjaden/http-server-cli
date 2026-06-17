@@ -1,0 +1,294 @@
+name: http-server-cli
+version: 1.0.1
+description: 基于 python3 -m http.server 的本地 HTTP 服务管理器。自动分配端口、追踪项目映射、管理服务生命周期。
+date: 2026-06-17
+author: IRIS
+
+metadata:
+  source: src/http_server_cli/
+  tests: tests/
+
+capabilities:
+  - service-lifecycle
+  - port-allocation
+  - registry
+  - configuration
+  - cli-interface
+
+specs:
+
+  # ── 服务生命周期 ──────────────────────────────────
+
+  service-lifecycle:
+    purpose: HTTP 服务的启动、查询、关闭全生命周期管理
+    requirements:
+      - id: lifecycle-01
+        name: 启动服务
+        description: start 命令应能在指定路径上启动 HTTP 服务，支持普通和 daemon 两种模式
+        priority: MUST
+        scenarios:
+          - name: 默认路径启动
+            given: 端口 8080 空闲
+            when: 执行 hs start
+            then:
+              - 在默认端口 8080 上启动 HTTP 服务
+              - 将服务注册到 registry
+
+          - name: daemon 模式启动
+            given: 端口 8080 空闲
+            when: 执行 hs start . -d
+            then:
+              - 服务启动后进入 tail -f 日志查看
+              - Ctrl+C 时日志查看停止，服务仍在后台运行
+              - registry 条目 daemon 字段为 true
+
+          - name: 指定路径启动
+            given: 端口 8080 空闲，路径 /tmp/project 存在
+            when: 执行 hs start /tmp/project
+            then:
+              - 在 /tmp/project 目录启动服务
+              - 注册表记录 path 为 /private/tmp/project
+
+          - name: 路径不存在
+            given: 路径 /nonexistent 不存在
+            when: 执行 hs start /nonexistent
+            then:
+              - 输出路径不存在提示
+              - registry 不写入任何条目
+
+          - name: 启动后打开浏览器
+            given: 端口 8080 空闲
+            when: 执行 hs start . -o
+            then: 启动服务后自动打开 http://localhost:8080
+
+      - id: lifecycle-02
+        name: 列出服务
+        description: list 命令应展示所有已注册服务及其状态
+        priority: MUST
+        scenarios:
+          - name: 无服务时
+            given: registry 为空
+            when: 执行 hs list
+            then: 输出"没有正在运行的 HTTP 服务"
+
+          - name: 有已注册服务
+            given: registry 中存在一条有效记录
+            when: 执行 hs list
+            then: 输出包含端口、路径、PID、状态
+
+      - id: lifecycle-03
+        name: 查询状态
+        description: status 命令应查询指定端口或路径的服务状态
+        priority: MUST
+        scenarios:
+          - name: 按端口查询已注册服务
+            given: 端口 8080 已注册且存活
+            when: 执行 hs status 8080
+            then: 输出"运行中"及相关信息
+
+          - name: 查询未注册端口
+            given: 端口 9999 未注册
+            when: 执行 hs status 9999
+            then: 输出"未注册"
+
+          - name: 无参数时等同于 list
+            when: 执行 hs status
+            then: 输出与 list 相同的服务列表
+
+      - id: lifecycle-04
+        name: 关闭服务
+        description: kill 命令应按端口或路径关闭服务，并从 registry 移除
+        priority: MUST
+        scenarios:
+          - name: 按端口关闭
+            given: 端口 8080 已注册
+            when: 执行 hs kill 8080
+            then:
+              - 终止该端口的服务进程
+              - registry 中对应记录被删除
+
+          - name: 按路径关闭
+            given: 路径 /tmp/project 已注册
+            when: 执行 hs kill /tmp/project
+            then:
+              - 终止该路径对应的服务
+              - registry 中对应记录被删除
+
+          - name: 关闭未注册端口
+            given: 端口 9999 未注册
+            when: 执行 hs kill 9999
+            then: 输出"未注册"提示
+
+          - name: 关闭所有服务
+            given: registry 中有 2 条记录
+            when: 执行 hs kill-all
+            then:
+              - 所有服务进程被终止
+              - registry 被清空
+
+  # ── 端口分配 ───────────────────────────────────────
+
+  port-allocation:
+    purpose: 自动检测端口占用并从默认端口递增分配空闲端口
+    requirements:
+      - id: port-01
+        name: 默认端口优先
+        description: 默认端口空闲时直接使用，不递增
+        priority: MUST
+        scenarios:
+          - name: 默认端口空闲
+            given: 端口 8080 未被占用
+            when: 执行 hs start .
+            then: 服务绑定 8080
+
+      - id: port-02
+        name: 自动递增
+        description: 默认端口被占时自动递增寻找下一空闲端口
+        priority: MUST
+        scenarios:
+          - name: 默认端口被占
+            given: 端口 8080 被占用，8081 空闲
+            when: 执行 hs start .
+            then:
+              - 服务绑定 8081
+              - 输出"自动分配端口 8081"
+
+      - id: port-03
+        name: 无可用端口提示
+        description: 连续递增至上限仍无空闲端口时应报错
+        priority: SHOULD
+        scenarios:
+          - name: 所有端口被占
+            given: 端口 8080-10000 全部被占用
+            when: 执行 hs start .
+            then: 输出"端口已全部被占用"
+
+  # ── Registry ───────────────────────────────────────
+
+  registry:
+    purpose: 持久化记录 port ↔ {path, pid, domain, started_at} 映射
+    requirements:
+      - id: reg-01
+        name: 写入与持久化
+        description: 服务启动后 registry 应即时写入磁盘 JSON
+        priority: MUST
+        scenarios:
+          - name: 启动后写入
+            given: 服务成功启动在 8080
+            when: 读取 registry.json
+            then:
+              - servers 数组长度 > 0
+              - 第一条记录的 port=8080
+
+      - id: reg-02
+        name: 找回已注册服务
+        description: 已注册且存活的服务再次 start 应直接打开浏览器
+        priority: SHOULD
+        scenarios:
+          - name: 重复启动
+            given: 端口 8080 已注册且进程存活
+            when: 再次执行 hs start .
+            then: 输出"服务已在运行"并打开浏览器
+
+      - id: reg-03
+        name: 清除残留记录
+        description: 进程已死但 registry 残留时自动清理
+        priority: SHOULD
+        scenarios:
+          - name: 残留清理
+            given: registry 有残留记录但进程已死
+            when: 执行 hs start .
+            then:
+              - 输出"发现残留注册记录，清理后重新启动"
+              - 旧记录被删除，新记录写入
+
+  # ── 配置管理 ───────────────────────────────────────
+
+  configuration:
+    purpose: 默认端口和域名的持久化配置
+    requirements:
+      - id: cfg-01
+        name: 默认配置
+        description: 首次运行应生成默认配置
+        priority: MUST
+        scenarios:
+          - name: 首次运行
+            when: 执行 hs config
+            then:
+              - config.json 存在
+              - port=8080
+              - domain=localhost
+
+      - id: cfg-02
+        name: 修改默认端口
+        description: set port 应修改默认端口并持久化
+        priority: MUST
+        scenarios:
+          - name: 修改端口
+            when: 执行 hs set port 3000
+            then:
+              - config.json 中 port=3000
+              - 后续 start 从 3000 开始分配
+
+      - id: cfg-03
+        name: 修改域名
+        description: set domain 应修改绑定域名并持久化
+        priority: MUST
+        scenarios:
+          - name: 修改域名
+            when: 执行 hs set domain 0.0.0.0
+            then:
+              - config.json 中 domain=0.0.0.0
+              - 后续启动使用该域名
+
+      - id: cfg-04
+        name: 配置损坏保护
+        description: config.json 损坏时应 fallback 到默认值
+        priority: SHOULD
+        scenarios:
+          - name: 损坏配置
+            given: config.json 内容不是合法 JSON
+            when: 读取配置
+            then: 使用默认值 8080/localhost
+
+  # ── CLI 接口 ───────────────────────────────────────
+
+  cli-interface:
+    purpose: 命令行参数解析与帮助/版本显示
+    requirements:
+      - id: cli-01
+        name: 帮助信息
+        description: help / -h / --help 应显示完整用法
+        priority: MUST
+        scenarios:
+          - name: help 命令
+            when: 执行 hs help
+            then: 输出包含所有子命令和使用示例
+
+          - name: -h 标志
+            when: 执行 hs -h
+            then: 输出与 help 相同的内容
+
+      - id: cli-02
+        name: 版本信息
+        description: version / -v / --version 应显示版本号
+        priority: MUST
+        scenarios:
+          - name: version 命令
+            when: 执行 hs version
+            then: 输出 http-server-cli v1.0.1
+
+          - name: --version 标志
+            when: 执行 hs --version
+            then: 输出版本号
+
+      - id: cli-03
+        name: 未知命令
+        description: 未知子命令应报错并显示帮助
+        priority: MUST
+        scenarios:
+          - name: 未知命令
+            when: 执行 hs unknown-command
+            then:
+              - 输出"未知命令"
+              - 显示帮助信息

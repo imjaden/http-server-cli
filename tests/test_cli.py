@@ -1,0 +1,78 @@
+# -*- coding: utf-8 -*-
+"""
+CLI 入口测试 — OpenSpec: cli-01 ~ cli-03
+
+测试命令分派、help/version 输出、未知命令处理、killall 别名。
+不测试 main() 完整流程（argparse + sys.exit），而是直接测试 _cmd_* 分派函数
+和 _COMMANDS 注册表。
+"""
+
+import sys
+from unittest.mock import MagicMock
+
+import pytest
+
+from http_server_cli import __version__
+from http_server_cli.cli import _COMMANDS
+
+pytestmark = pytest.mark.spec("cli-interface")
+
+class TestCommandRegistry:
+    """所有命令是否已注册"""
+
+    def test_all_commands_registered(self):
+        """期望的全部命令列表"""
+        expected = {
+            'start', 'list', 'status', 'kill', 'kill_all', 'killall',
+            'config', 'set', 'help', 'version',
+        }
+        assert expected.issubset(_COMMANDS.keys())
+
+    def test_killall_is_alias(self):
+        """killall 和 kill_all 应是不同入口但指向不同处理函数"""
+        assert 'killall' in _COMMANDS
+        assert 'kill_all' in _COMMANDS
+
+class TestVersionCommand:
+    """version 命令输出"""
+
+    def test_version_output(self, capsys):
+        _COMMANDS['version'](None, [])
+        captured = capsys.readouterr()
+        assert f'http-server-cli v{__version__}' in captured.out
+
+class TestHelpCommand:
+    """help 命令输出"""
+
+    def test_help_contains_start(self, capsys):
+        _COMMANDS['help'](None, [])
+        captured = capsys.readouterr()
+        assert 'start' in captured.out
+        assert 'list' in captured.out
+        assert 'kill' in captured.out
+        assert 'config' in captured.out
+
+    def test_help_contains_daemon_flag(self, capsys):
+        _COMMANDS['help'](None, [])
+        captured = capsys.readouterr()
+        assert '-d' in captured.out
+
+class TestKillAllAlias:
+    """killall 别名应调用 kill_all 相同逻辑"""
+
+    def test_killall_dispatches_to_kill_all(self, monkeypatch):
+        called = []
+        mock_mgr = MagicMock()
+        monkeypatch.setattr(mock_mgr, 'kill_all', lambda: called.append(True))
+
+        _COMMANDS['killall'](mock_mgr, [])
+        _COMMANDS['kill_all'](mock_mgr, [])
+
+        assert len(called) == 2
+
+class TestUnknownCommand:
+    """未知命令应在 main() 中处理。此处验证 _COMMANDS 不包含它。"""
+
+    def test_unknown_not_in_registry(self):
+        assert 'unknown-command' not in _COMMANDS
+        assert 'foobar' not in _COMMANDS

@@ -1,0 +1,3 @@
+include http-server-cli.spec.yaml
+include README.md
+include pyproject.toml

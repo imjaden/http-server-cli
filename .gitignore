@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+cache/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+pip-wheel-metadata/
+
+# Virtualenv
+venv/
+.env/
+.venv/
+ENV/
+env/
+
+# Type checking
+.mypy_cache/
+.pytest_mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Test / Coverage
+.pytest_cache/
+.coverage*
+htmlcov/
+
+# Runtime
+*.log
+
+# Environment
+.env
+.env.local
